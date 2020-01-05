@@ -1,6 +1,7 @@
 var agent = require('./utils/common');
 var config = require('./config');
-var JSON = require('./utils/json');
+var core = require('./core');
+var store = require('./utils/store');
 var detector = require('./detector/user-agent-detector');
 var dom = require('./detector/dom-detector');
 
@@ -29,7 +30,7 @@ var commonWays = {
                 subject: {},
                 object: {}
             });
-            // _.log('页面加载时间：' + loadTime);
+            pointAgent._.log('页面加载时间：' + config.loadTime);
         });
     }
 
@@ -334,7 +335,6 @@ pointAgent.init = function (config) {
     if (config && !agent.isEmptyObject(config)) {
         agent.extend(that.config, config);
     }
-    
     if (that._agenti) {
         agent.each(that._agenti, function (params) {
             that[params[0]].apply(that, Array.prototype.slice.call(params[1]));
@@ -345,4 +345,5 @@ pointAgent.init = function (config) {
     }
     that.inited();
 };
+
 module.exports = pointAgent;
