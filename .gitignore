@@ -1,0 +1,6 @@
+.
+node_modules/
+mock/
+.vscode
+.DS_Store
+dist/*.js
