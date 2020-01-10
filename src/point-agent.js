@@ -1,13 +1,16 @@
-var agent = require('./utils/common');
+var common = require('./utils/common');
 var config = require('./config');
 var core = require('./core');
 var store = require('./utils/store');
 var detector = require('./detector/user-agent-detector');
 var dom = require('./detector/dom-detector');
+var sender = require('./utils/sender');
 
 var pointAgent = {};
-pointAgent._ = agent;
+pointAgent._ = common;
 pointAgent.config = config;
+
+var eventCategories = sender.getEventCategory();
 
 var commonWays = {
     /**
@@ -15,25 +18,65 @@ var commonWays = {
      */
     autoTrack: function () {
         var that = this;
-        var compaignParams = agent.info.campaignParams();
+        var compaignParams = common.info.campaignParams();
         // 注册load事件是为了获取到页面资源加载完成时间
         dom.addEvent(window, 'load', function () {
-            var loadProper = {
-                event: 'view_page',
-                properties: {
-                    b_page_load_time: ((new Date()) - config.loadTime) / 1000
-                }
-            }
-            var properties = agent.extend(loadProper.properties, compaignParams);
+            var loadProper = sender.getLoadTime();
+            var properties = common.extend(loadProper.properties, compaignParams);
             that.track(loadProper.event, {
                 properties: properties,
                 subject: {},
                 object: {}
             });
-            pointAgent._.log('页面加载时间：' + config.loadTime);
         });
+        // 移动设备横竖屏转换
+        dom.addEvent(window, 'orientationchange', function () {
+            var orient = '';
+            if (window.orientation == 180 || window.orientation == 0) {
+                orient = sender.getChangeOrient('portrait'); // 竖屏
+                store.setProps(orient);
+            }
+            if (window.orientation == 90 || window.orientation == -90) {
+                orient = sender.getChangeOrient('landscape'); // 横屏
+                store.setProps(orient);
+            }
+        })
+        // 点击事件数据，加入限定收集时间
+        var preClickTS = new Date * 1;
+        dom.addEvent(document, 'click', function (e) {
+            var curDate = new Date * 1;
+            if (curDate - preClickTS <= 1000) return;
+            preClickTS = curDate;
+            var preset = sender.getClickPreset(e);
+            var properties = common.extend({}, preset.properties);
+            preset && that.track(preset.event, {
+                properties: properties,
+                subject: {},
+                object: {}
+            });
+        });
+        // 页面离开
+        dom.addEvent(window, 'beforeunload', function (e) {
+            var leavePage = sender.getLeavePage();
+            var properties = common.extend(leavePage.properties);
+            that.track(leavePage.event, {
+                properties: properties,
+                subject: {},
+                object: {}
+            }, true); //离开页面时立即将事件池清空，全部发送
+            setTimeout(function () { }, 600);
+        });
+        dom.addEvent(window, 'unload', function (e) {
+            function sleep(ms) {
+                var start = Date.now(),
+                    expire = start + ms;
+                while (Date.now() < expire);
+                return;
+            }
+            setTimeout(function () {
+            }, 100);
+        })
     }
-
 }
 
 pointAgent.quick = function () {
@@ -45,7 +88,7 @@ pointAgent.quick = function () {
     } else if (typeof arg0 === 'function') {
         arg0.apply(this, arg1);
     } else {
-        agent.log('quick方法中没有这个功能' + arg[0]);
+        common.log('quick方法中没有这个功能' + arg[0]);
     }
 };
 
@@ -59,6 +102,20 @@ pointAgent.autoTrack = function () {
  * @param {boolean} sendImmediately 是否立即发送
  * */
 pointAgent.track = function (event, props, sendImmediately) {
+    if (core.check({
+        event: event,
+        properties: props.properties,
+        subject: props.subject,
+        object: props.object
+    })) {
+        var category = eventCategories[event] || 'customize';
+        core.send(common.extend({
+            action: 'track',
+            event: event,
+            category: category,
+            sly: sendImmediately
+        }, props));
+    }
 };
 
 /*
@@ -93,17 +150,17 @@ pointAgent.appendProfile = function (p) {
     if (core.check({
         propertiesMust: p
     })) {
-        agent.each(p, function (value, key) {
-            if (agent.isString(value)) {
+        common.each(p, function (value, key) {
+            if (common.isString(value)) {
                 p[key] = [value];
-            } else if (agent.isArray(value)) {
+            } else if (common.isArray(value)) {
 
             } else {
                 delete p[key];
-                agent.log('appendProfile属性的值必须是字符串或者数组');
+                common.log('appendProfile属性的值必须是字符串或者数组');
             }
         });
-        if (!agent.isEmptyObject(p)) {
+        if (!common.isEmptyObject(p)) {
             core.send({
                 action: 'profile_append',
                 properties: p
@@ -117,7 +174,7 @@ pointAgent.appendProfile = function (p) {
  * */
 pointAgent.incrementProfile = function (p) {
     var str = p;
-    if (agent.isString(p)) {
+    if (common.isString(p)) {
         p = {}
         p[str] = 1;
     }
@@ -138,7 +195,7 @@ pointAgent.incrementProfile = function (p) {
                 properties: p
             });
         } else {
-            agent.log('profile_increment的值只能是数字');
+            common.log('profile_increment的值只能是数字');
         }
     }
 };
@@ -147,7 +204,7 @@ pointAgent.deleteProfile = function () {
     core.send({
         action: 'profile_delete'
     });
-    store.set('uniqueId', agent.UUID());
+    store.set('uniqueId', common.UUID());
 };
 
 /*
@@ -156,16 +213,16 @@ pointAgent.deleteProfile = function () {
 pointAgent.unsetProfile = function (p) {
     var str = p;
     var temp = {};
-    if (agent.isString(p)) {
+    if (common.isString(p)) {
         p = [];
         p.push(str);
     }
-    if (agent.isArray(p)) {
-        agent.each(p, function (v) {
-            if (agent.isString(v)) {
+    if (common.isArray(p)) {
+        common.each(p, function (v) {
+            if (common.isString(v)) {
                 temp[v] = true;
             } else {
-                agent.log('profile_unset给的数组里面的值必须时string,已经过滤掉', v);
+                common.log('profile_unset给的数组里面的值必须时string,已经过滤掉', v);
             }
         });
         core.send({
@@ -173,7 +230,7 @@ pointAgent.unsetProfile = function (p) {
             properties: temp
         });
     } else {
-        agent.log('profile_unset的参数是数组');
+        common.log('profile_unset的参数是数组');
     }
 };
 
@@ -182,7 +239,7 @@ pointAgent.unsetProfile = function (p) {
  * */
 pointAgent.identify = function (id, isSave) {
     if (typeof id === 'undefined') {
-        store.set('uniqueId', agent.UUID());
+        store.set('uniqueId', common.UUID());
     } else if (core.check({
         uniqueId: id
     })) {
@@ -192,14 +249,14 @@ pointAgent.identify = function (id, isSave) {
             store.change('uniqueId', id);
         }
     } else {
-        agent.log('identify的参数必须是字符串');
+        common.log('identify的参数必须是字符串');
     }
 };
 
 pointAgent.userIdentify = function (id, props, isSave) {
     if (typeof id === 'undefined') {
         // ID为空，则生成一个新的CookieID，用来表示新的将会登录
-        store.set('uniqueId', agent.UUID());
+        store.set('uniqueId', common.UUID());
         store.set('userId', '');
         store.clearSubject();
     } else if (core.check({
@@ -208,7 +265,7 @@ pointAgent.userIdentify = function (id, props, isSave) {
     })) {
         if (isSave === true) {
             store.set('userId', id);
-            if (!agent.isEmptyObject(props)) {
+            if (!common.isEmptyObject(props)) {
                 store.setSubject(props);
             }
         } else {
@@ -216,7 +273,7 @@ pointAgent.userIdentify = function (id, props, isSave) {
             store.change('subject', props);
         }
     } else {
-        agent.log('userIdentify的参数输入有误');
+        common.log('userIdentify的参数输入有误');
     }
 };
 
@@ -275,7 +332,7 @@ pointAgent.register = function (props) {
     })) {
         store.setProps(props);
     } else {
-        agent.log('register输入的参数有误');
+        common.log('register输入的参数有误');
     }
 };
 
@@ -285,7 +342,7 @@ pointAgent.registerOnce = function (props) {
     })) {
         store.setPropsOnce('props', props);
     } else {
-        agent.log('registerOnce输入的参数有误');
+        common.log('registerOnce输入的参数有误');
     }
 };
 
@@ -295,7 +352,7 @@ pointAgent.registerSession = function (props) {
     })) {
         store.setSessionProps(props);
     } else {
-        agent.log('registerSession输入的参数有误');
+        common.log('registerSession输入的参数有误');
     }
 };
 
@@ -305,7 +362,7 @@ pointAgent.registerSessionOnce = function (props) {
     })) {
         store.setSessionPropsOnce(props);
     } else {
-        agent.log('registerSessionOnce输入的参数有误');
+        common.log('registerSessionOnce输入的参数有误');
     }
 };
 
@@ -314,7 +371,7 @@ pointAgent.getSessionId = function () {
 };
 
 pointAgent.getUtils = function () {
-    return agent;
+    return common;
 };
 
 pointAgent.getUADetector = function () {
@@ -332,11 +389,11 @@ pointAgent.inited = function () {
 pointAgent.init = function (config) {
     var that = this;
     that.preInit();
-    if (config && !agent.isEmptyObject(config)) {
-        agent.extend(that.config, config);
+    if (config && !common.isEmptyObject(config)) {
+        common.extend(that.config, config);
     }
     if (that._agenti) {
-        agent.each(that._agenti, function (params) {
+        common.each(that._agenti, function (params) {
             that[params[0]].apply(that, Array.prototype.slice.call(params[1]));
         });
     }

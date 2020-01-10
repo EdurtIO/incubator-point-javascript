@@ -3,6 +3,7 @@ var common = require('./utils/common');
 var md5 = require('./utils/md5');
 var JSON = require('./utils/json');
 var store = require('./utils/store');
+var sender = require('./utils/sender');
 
 /**
  * 监听器状态
@@ -253,6 +254,19 @@ module.exports = {
    * 事件发送
    */
   send: function (props) {
+    var that = this;
+    var data = sender.mergeData(props);
+    common.log('追踪到事件：\r\n' + JSON.stringify(data, null, 4));
+    //插入事件池
+    that.globalContext.pushEvent(data);
+    //触发监听
+    //原本monitor使用了定时器，但后来发觉如果用户开多个页面的时候每个页面上都会存在定时器来不断的触发事件发送，这样会丧失数据的一致性。并且性能会有很大影响
+    //所以目前改为主动触发
+    //事件分为两种类型：1、可缓存的事件，2、立即发送的事件。
+    //遇到立即发送的事件，会直接发送当前事件池的所有事件，不管回调结果即清空事件池。
+    setTimeout(function () {
+      that.monitor(data.sly);
+    }, 10);
   },
 
   /**
